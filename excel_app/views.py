@@ -75,6 +75,7 @@ def process_files(request):
                 data_frame = data_frame.sort_values(by='Regis', ascending=False)
 
                 data_frame.columns = data_frame.columns.str.strip().str.lower()
+                
                 deduplication_columns = ['building no', 'unitnumber', 'project', 'landnumber', 'size']
 
                 available_columns = [col for col in deduplication_columns if col in data_frame.columns]
@@ -82,7 +83,7 @@ def process_files(request):
                 if available_columns:
                     data_frame[available_columns] = data_frame[available_columns].astype(str)
 
-                    data_frame = data_frame.drop_duplicates(subset=available_columns)
+                    data_frame = data_frame.drop_duplicates(subset=available_columns, keep='first')
                 
                 filename = f"processed_{os.path.basename(input_path)}"
                 output_path = os.path.join(settings.PROCESSED_DIR, filename)
