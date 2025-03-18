@@ -7,7 +7,7 @@ SECRET_KEY = 'django-insecure-%(13=tv^r5s6@wtu0qaf9ix$gakocz@x=fz2u!4(z--d!x*d)w
 
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['https://panel.wowproperties.ae/', 'panel.wowproperties.ae', '127.0.0.1']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
