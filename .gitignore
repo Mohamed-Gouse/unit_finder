@@ -30,6 +30,7 @@ logs/
 
 # Ignore compiled static files (if using collectstatic)
 staticfiles/
+property_data.xlsx
 
-git clone https://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@github.com/Mohamed-Gouse/unit_finder.git
+# git clone https://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@github.com/Mohamed-Gouse/unit_finder.git
 
