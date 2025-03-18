@@ -5,7 +5,7 @@ import pandas as pd
 
 def get_upload_path(instance, filename):
     """Generate a unique path for uploaded files."""
-    return os.path.join('uploads', f"{uuid.uuid4().hex}_{filename}")
+    return os.path.join('uploads', f"{filename}")
 
 class ExcelFile(models.Model):
     """Model to store uploaded Excel files."""

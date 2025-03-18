@@ -10,6 +10,7 @@ import queue
 import uuid
 from django.views.decorators.csrf import csrf_exempt
 import time
+from io import BytesIO
 
 token = 'apify_api_HMvSVv0jj56tMSsHcg0wEWGnOUkOOc1sN8o1'
 
@@ -114,8 +115,8 @@ class PropertyProcessor:
                     owner_details = merged_file.get_owner_details(building_name, unit_number)
                 
                 formatted_items.append({
+                    'url': url.strip(),
                     "Area": item.get("ZoneNameEn", ""),
-                    "master_project": "",
                     "BuildingNameEn": building_name,
                     "UnitNumber": unit_number,
                     "property_type": item.get("PropertyTypeNameEn", ""),
@@ -206,42 +207,85 @@ def check_status(request):
     
     return JsonResponse(response_data)
 
+def format_deal_name(row):
+    units = row['UnitNumber'].split(', ')
+    if len(units) > 1:
+        return f"{units[0]} # {row['BuildingNameEn']}"
+    return f"{units[0]} | {row['BuildingNameEn']}"
+
+def format_phone_number(phone_number):
+    phone_number = str(phone_number).replace('+', '')
+    return f"+{phone_number.replace('-', ' ')}"
+
 def download_excel(request):
-    """Download the processed Excel file"""
     filename = request.GET.get('filename')
-    
-    if not filename:
-        # For backward compatibility
-        latest_file = None
-        latest_time = 0
-        
-        for file in os.listdir(EXCEL_DIR):
-            if file.startswith("property_data_") and file.endswith(".xlsx"):
-                filepath = os.path.join(EXCEL_DIR, file)
-                file_time = os.path.getmtime(filepath)
-                
-                if file_time > latest_time:
-                    latest_time = file_time
-                    latest_file = filepath
-        
-        if latest_file:
-            filename = os.path.basename(latest_file)
-        else:
-            return HttpResponse("No data available", status=400)
-    
-    filepath = os.path.join(EXCEL_DIR, filename)
-    
-    if os.path.exists(filepath):
-        with open(filepath, 'rb') as file:
+
+    try:
+        if not filename:
+            latest_file = max(
+                (f for f in os.listdir(EXCEL_DIR) if f.startswith("property_data_") and f.endswith(".xlsx")),
+                key=lambda f: os.path.getmtime(os.path.join(EXCEL_DIR, f)),
+                default=None
+            )
+
+            if not latest_file:
+                return HttpResponse("No processed data available", status=400)
+
+            filename = latest_file
+
+        filepath = os.path.join(EXCEL_DIR, filename)
+
+        if not os.path.exists(filepath):
+            return HttpResponse("File not found", status=404)
+
+        data_frame = pd.read_excel(filepath)
+        data_frame = data_frame[data_frame['owner_name'] != 'NILL']
+        data_frame = data_frame[data_frame['owner_phone'].notna() & (data_frame['owner_phone'] != '')]
+
+        if not data_frame.empty:
+            final_result = data_frame.groupby('owner_phone', as_index=False).agg({
+                'UnitNumber': lambda x: ', '.join(sorted(set(x))),
+                'url': lambda x: ', '.join(sorted(set(x))),
+                **{col: 'first' for col in data_frame.columns if col not in ['owner_phone', 'UnitNumber', 'url']}
+            })
+
+            final_result['Deal Name'] = final_result.apply(format_deal_name, axis=1)
+            final_result['permit_type'] = final_result['permit_type'].str.lower()
+
+            deal_data = pd.DataFrame({
+                'Deal Name': final_result['Deal Name'],
+                'Amount': final_result['Amount'],
+                'Pipeline Name': final_result['permit_type'].apply(lambda x: 'Seller Pipeline' if x in ['sell', 'buy'] else 'Landlord Pipeline'),
+                'Stage': 'New enquiry',
+                'Lead Source': 'Campaign',
+                'Last Name': final_result['owner_name'],
+                'Tag': 'Warm Lead',
+                'Follow up date': datetime.today().strftime('%d/%m/%Y %H:%M'),
+                'Phone': final_result['owner_phone'],
+                'Description': final_result['url'],
+                'Unit No': final_result['UnitNumber'],
+            })
+
+            deal_data['Phone'] = deal_data['Phone'].apply(format_phone_number)
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                deal_data.to_excel(writer, index=False, sheet_name="CRM Data")
+
+            output.seek(0)
+
             response = HttpResponse(
-                file.read(),
+                output.read(),
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
-            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            response['Content-Disposition'] = f'attachment; filename="modified_{filename}"'
             return response
-    
-    return HttpResponse("File not found", status=404)
 
+        return HttpResponse("No valid data to process", status=400)
+
+    except Exception as e:
+        return HttpResponse(f"Error processing request: {str(e)}", status=500)
+    
 @csrf_exempt
 def add_to_crm(request):
     """Receive property data and add it to CRM."""
@@ -254,6 +298,7 @@ def add_to_crm(request):
                 return JsonResponse({'status': 'error', 'message': 'No property data received'}, status=400)
             
             print(f"Adding {len(property_data)} properties to CRM")
+            print(f"Adding {property_data} properties to CRM")
                 
             return JsonResponse({'status': 'success', 'message': 'Added to CRM successfully'})
             
