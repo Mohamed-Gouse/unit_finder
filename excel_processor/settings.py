@@ -52,8 +52,15 @@ WSGI_APPLICATION = 'excel_processor.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'wowprope_panel_db',
+        'USER': 'wowprope_gouse_wowp',
+        'PASSWORD': 'wow@3205',
+        'HOST': 'localhost',
+        'PORT': '3306',
+        'OPTIONS': {
+            'sql_mode': 'STRICT_ALL_TABLES',
+        },
     }
 }
 
