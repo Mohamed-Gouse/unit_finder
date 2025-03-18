@@ -1,0 +1,32 @@
+# Ignore SQLite database
+db.sqlite3
+
+# Ignore media/uploads
+media/
+
+# Ignore environment files
+.env
+
+# Ignore compiled Python files
+__pycache__/
+*/__pycache__/
+
+# Ignore migrations except __init__.py
+*/migrations/*
+!*/migrations/__init__.py
+
+# Ignore exported property data (if this is specific to your project)
+property_exports/
+
+# Ignore IDE/editor-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore logs
+logs/
+*.log
+
+# Ignore compiled static files (if using collectstatic)
+staticfiles/

@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card shadow-sm p-4">
+    <h1 class="mb-4 text-center">Property Data Processor</h1>
+    
+    <!-- Notifications -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 5">
+        <!-- CRM Toast -->
+        <div id="crmToast" class="toast hide" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-success text-white">
+                <strong class="me-auto">Success</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                Added to CRM successfully!
+            </div>
+        </div>
+        
+        <!-- Error Toast -->
+        <div id="errorToast" class="toast hide" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-danger text-white">
+                <strong class="me-auto">Error</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="errorToastBody">
+                An error occurred.
+            </div>
+        </div>
+    </div>
+    
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    
+    <!-- Processing Status Section -->
+    {% if processing_status %}
+    <div id="processingSection" class="mb-4">
+        <div class="alert alert-info">
+            <h4>Processing URLs</h4>
+            <div class="progress mt-2">
+                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+            </div>
+            <div class="d-flex justify-content-between mt-2">
+                <small id="progressStatus">Processed: 0 of {{ total_urls }}</small>
+                <small id="lastUpdate">Last update: -</small>
+            </div>
+        </div>
+        
+        <div id="downloadSection" class="mt-3 d-none">
+            <div class="alert alert-success">
+                <h5>Processing Complete!</h5>
+                <p>Your data is ready to download and view.</p>
+                <a id="downloadExcelBtn" href="#" class="btn btn-success">
+                    <i class="fa fa-download"></i> Download Excel
+                </a>
+                <button id="viewResultsBtn" class="btn btn-primary">
+                    <i class="fa fa-table"></i> View Results
+                </button>
+            </div>
+        </div>
+        
+        <div id="errorSection" class="mt-3 d-none">
+            <div class="alert alert-danger">
+                <h5>Processing Failed</h5>
+                <p id="errorMessage">An error occurred during processing.</p>
+                <button class="btn btn-primary" onclick="location.reload()">
+                    <i class="fa fa-refresh"></i> Start Over
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Input Form -->
+    <div id="inputForm" {% if processing_status %} class="d-none"{% endif %}>
+        <form action="" method="POST">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label for="urls" class="form-label">Property URLs (one per line)</label>
+                <textarea class="form-control" placeholder="Paste URLs here..." name="urls" rows="5"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="fa fa-play"></i> Process URLs
+            </button>
+        </form>
+    </div>
+    
+    <!-- Results Section (initially hidden) -->
+    <div id="resultsSection" class="mt-4 d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2>Results Preview</h2>
+            <div>
+                <button id="returnToFormBtn" class="btn btn-outline-secondary">
+                    <i class="fa fa-arrow-left"></i> New Search
+                </button>
+            </div>
+        </div>
+        
+        <div class="table-responsive">
+            <div id="tableContainer">
+                <!-- Table will be loaded here -->
+            </div>
+        </div>
+        
+        <div class="mt-3">
+            <a id="downloadResultsBtn" href="#" class="btn btn-success">
+                <i class="fa fa-download"></i> Download as Excel
+            </a>
+            
+            <button id="addToCrmBtn" class="btn btn-primary ms-2">
+                <i class="fa fa-plus"></i> Add to CRM
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        {% if processing_status %}
+            // Initialize processing status checking
+            const taskId = "{{ task_id }}";
+            let processingInterval;
+            let resultData = null;
+            let excelFilename = null;
+            
+            // Create toast objects
+            const crmToast = new bootstrap.Toast(document.getElementById('crmToast'));
+            const errorToast = new bootstrap.Toast(document.getElementById('errorToast'));
+            
+            // Start polling for status updates
+            checkProcessingStatus();
+            processingInterval = setInterval(checkProcessingStatus, 2000);
+            
+            function checkProcessingStatus() {
+                fetch(`/check-status/?task_id=${taskId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update progress
+                        const progressBar = document.getElementById('progressBar');
+                        progressBar.style.width = `${data.progress}%`;
+                        progressBar.textContent = `${data.progress}%`;
+                        progressBar.setAttribute('aria-valuenow', data.progress);
+                        
+                        // Update status text
+                        document.getElementById('progressStatus').textContent = 
+                            `Processed: ${data.processed} of ${data.total}`;
+                        document.getElementById('lastUpdate').textContent = 
+                            `Last update: ${data.last_update}`;
+                        
+                        // Check if completed
+                        if (data.status === 'completed') {
+                            clearInterval(processingInterval);
+                            
+                            // Store data for later use
+                            if (data.data_json) {
+                                resultData = data.data_json;
+                            }
+                            
+                            // Show download section
+                            const downloadSection = document.getElementById('downloadSection');
+                            downloadSection.classList.remove('d-none');
+                            
+                            // Set excel filename
+                            excelFilename = data.excel_filename;
+                            const downloadBtn = document.getElementById('downloadExcelBtn');
+                            downloadBtn.href = `/download-excel/?filename=${encodeURIComponent(excelFilename)}`;
+                            
+                            // Set up view results button
+                            document.getElementById('viewResultsBtn').addEventListener('click', function() {
+                                document.getElementById('processingSection').classList.add('d-none');
+                                document.getElementById('resultsSection').classList.remove('d-none');
+                                document.getElementById('tableContainer').innerHTML = data.table_html;
+                                
+                                // Set up download button in results section
+                                document.getElementById('downloadResultsBtn').href = 
+                                    `/download-excel/?filename=${encodeURIComponent(excelFilename)}`;
+                            });
+                            
+                            // Clean up task data from server memory
+                            setTimeout(() => {
+                                fetch(`/clear-task/?task_id=${taskId}`);
+                            }, 5000);
+                        }
+                        else if (data.status.startsWith('failed')) {
+                            // Show error section
+                            clearInterval(processingInterval);
+                            const errorSection = document.getElementById('errorSection');
+                            errorSection.classList.remove('d-none');
+                            document.getElementById('errorMessage').textContent = 
+                                data.status.substring(7) || 'Processing failed';
+                                
+                            // Clean up task data
+                            setTimeout(() => {
+                                fetch(`/clear-task/?task_id=${taskId}`);
+                            }, 5000);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error checking status:', error);
+                    });
+            }
+            
+            // Set up "Return to form" button
+            document.getElementById('returnToFormBtn').addEventListener('click', function() {
+                resultData = null;
+                excelFilename = null;
+                
+                // Clear any DOM elements that might contain sensitive data
+                document.getElementById('tableContainer').innerHTML = '';
+                
+                // Optionally clear the task from server memory
+                if (taskId) {
+                    fetch(`/clear-task/?task_id=${taskId}`)
+                        .then(() => {
+                            // After clearing server-side data, reload the page
+                            window.location.href = '/';  // Redirect to home instead of reload to ensure a fresh state
+                        })
+                        .catch(() => {
+                            // If clearing fails, still reload the page
+                            window.location.href = '/';
+                        });
+                } else {
+                    // If no task ID, just reload
+                    window.location.href = '/';
+                }
+            });
+            
+            // Set up "Add to CRM" button
+            document.getElementById('addToCrmBtn').addEventListener('click', function() {
+                if (!resultData) {
+                    document.getElementById('errorToastBody').textContent = 'No data available to add to CRM';
+                    errorToast.show();
+                    return;
+                }
+                
+                const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+                const loadingBtn = this;
+                
+                // Show loading state
+                loadingBtn.disabled = true;
+                loadingBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Adding...';
+                
+                fetch('/add-to-crm/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken,
+                    },
+                    body: JSON.stringify({ property: JSON.parse(resultData) })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    loadingBtn.disabled = false;
+                    loadingBtn.innerHTML = '<i class="fa fa-plus"></i> Add to CRM';
+                    
+                    if (data.status === 'success') {
+                        crmToast.show();
+                    } else {
+                        document.getElementById('errorToastBody').textContent = data.message || 'Failed to add to CRM';
+                        errorToast.show();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    loadingBtn.disabled = false;
+                    loadingBtn.innerHTML = '<i class="fa fa-plus"></i> Add to CRM';
+                    
+                    document.getElementById('errorToastBody').textContent = 'Network error when adding to CRM';
+                    errorToast.show();
+                });
+            });
+        {% endif %}
+    });
+</script>
+{% endblock %}

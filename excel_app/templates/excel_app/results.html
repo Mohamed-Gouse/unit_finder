@@ -1,0 +1,41 @@
+{% extends 'excel_app/base.html' %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5>Processing Results</h5>
+    </div>
+    <div class="card-body">
+        {% if files %}
+        <h6>Processed Files</h6>
+        <ul class="list-group mb-4">
+            {% for file in files %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                {{ file.filename }}
+                <a href="{% url 'excel_app:download_file' file.id %}" class="btn btn-sm btn-primary">Download</a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        
+        {% if merged_files %}
+        <h6>Merged Files</h6>
+        <ul class="list-group">
+            {% for file in merged_files %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                {{ file.filename }}
+                <a href="{% url 'excel_app:download_merged' file.id %}" class="btn btn-sm btn-primary">Download</a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        
+        {% if not files and not merged_files %}
+        <p class="text-muted">No processed files available.</p>
+        {% endif %}
+    </div>
+    <div class="card-footer">
+        <a href="{% url 'excel_app:index' %}" class="btn btn-secondary">Back to Upload</a>
+    </div>
+</div>
+{% endblock %}
