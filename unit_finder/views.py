@@ -372,7 +372,6 @@ def download_excel(request):
         return HttpResponse(f"Error processing request: {str(e)}", status=500)
     
 @csrf_exempt
-@csrf_exempt
 def add_to_crm(request):
     """Receive property data and add it to CRM."""
     if request.method == 'POST':
@@ -394,73 +393,36 @@ def add_to_crm(request):
             else:
                 formatted_tags = "Warm Lead"
 
-            # Group properties by owner_phone
-            owner_properties = {}
             for lead in property_data:
                 if lead['owner_name'] == 'NILL' or not lead['owner_phone']:
                     continue
+                units = lead['UnitNumber'].split(', ')
+                if len(units) > 1:
+                    deal_name = f"{units[0]} # {lead['BuildingNameEn']}"
+                else:
+                    deal_name = f"{units[0]} | {lead['BuildingNameEn']}"
                 
                 phone = str(lead['owner_phone']).replace('+', '')
                 formatted_phone = f"+{phone.replace('-', ' ')}"
                 
-                if formatted_phone not in owner_properties:
-                    owner_properties[formatted_phone] = {
-                        'owner_name': lead['owner_name'],
-                        'properties': [],
-                        'total_amount': 0,
-                        'permit_types': set()
-                    }
+                permit_type = lead['permit_type'].lower() if lead['permit_type'] else ''
+                pipeline_name = 'Seller Pipeline' if permit_type in ['sell', 'buy'] else 'Landlord Pipeline'
                 
-                owner_properties[formatted_phone]['properties'].append(lead)
-                owner_properties[formatted_phone]['total_amount'] += float(lead.get('Amount', 0))
-                
-                permit_type = lead.get('permit_type', '').lower() if lead.get('permit_type') else ''
-                if permit_type:
-                    owner_properties[formatted_phone]['permit_types'].add(permit_type)
-            
-            # Process each owner's grouped properties
-            for phone, owner_data in owner_properties.items():
-                # Aggregate unit numbers and URLs
-                unit_numbers = []
-                urls = []
-                for prop in owner_data['properties']:
-                    units = prop.get('UnitNumber', '').split(', ')
-                    unit_numbers.extend(units)
-                    if prop.get('url'):
-                        urls.append(prop.get('url'))
-                
-                # Remove duplicates and sort
-                unit_numbers = sorted(set(unit_numbers))
-                urls = sorted(set(urls))
-                
-                # Create deal name from first unit and building
-                first_property = owner_data['properties'][0]
-                building_name = first_property.get('BuildingNameEn', '')
-                
-                if len(unit_numbers) > 1:
-                    deal_name = f"{unit_numbers[0]} # {building_name} (+{len(unit_numbers)-1} more)"
-                else:
-                    deal_name = f"{unit_numbers[0]} | {building_name}"
-                
-                # Determine pipeline based on permit types
-                pipeline_name = 'Seller Pipeline' if any(pt in ['sell', 'buy'] for pt in owner_data['permit_types']) else 'Landlord Pipeline'
-                
-                # Create deal data with all properties
                 deal_data = {
                     "Owner": {"id": deal_owner_id},
                     "Deal_Name": deal_name,
-                    "Amount": owner_data['total_amount'],
+                    "Amount": lead['Amount'],
                     "Sub_Pipeline": pipeline_name,
                     "Stage": "New enquiry",
                     "Lead_Source": "Campaign",
                     "Tag": formatted_tags,
                     "Follow_up_date": datetime.today().strftime('%Y-%m-%dT%H:%M:%S'),
-                    "Last_Name": owner_data['owner_name'],
-                    "Phone": phone,
-                    "Description": ', '.join(urls),
-                    "Unit_No": ', '.join(unit_numbers),
-                    "Property_Count": len(unit_numbers),  # New field for property count
-                    "Property_Value": owner_data['total_amount'],  # New field for total value
+                    "Last_Name": lead['owner_name'],
+                    "Phone": formatted_phone,
+                    # "Last_Name": "Mohamed Gouse",
+                    # "Phone": "+91 9048567736",
+                    "Description": lead['url'],
+                    "Unit_No": lead['UnitNumber'],
                     "Pipeline": {
                         "name": "Real Estate Pipeline",
                         "id": "6428826000000091023"
@@ -475,26 +437,20 @@ def add_to_crm(request):
         except json.JSONDecodeError as e:
             return JsonResponse({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}, status=400)
         except Exception as e:
-            return JsonResponse({'status': 'error', 'message': f'Error processing data: {str(e)}'}, status=500)
+            return JsonResponse({'status': 'error', 'message': f'Error processing data: {str(e)}'}, status=400)
     
     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
 
-
 def data_to_crm(req, deal_data):
     try:
+        print(deal_data)
+
         token_handler = TokenHandler(req.session)
         zoho_token = token_handler.get_zoho_token()
-
-        # Extract property count and value for contact creation/update
-        property_count = deal_data.get('Property_Count', 1)
-        property_value = deal_data.get('Property_Value', deal_data['Amount'])
 
         contact_payload = {
             'Last_Name': deal_data['Last_Name'],
             'Phone': deal_data['Phone'],
-            'Lead_Source': deal_data['Lead_Source'],
-            'Client_Value': property_value,
-            'No_of_Properties': property_count
         }
         contact_phone = deal_data['Phone']
 
@@ -513,29 +469,8 @@ def data_to_crm(req, deal_data):
                 # Contact exists
                 contact = search_response_json['data'][0]
                 contact_id = contact.get('id')
-                
-                # Get current values for existing contact
-                current_client_value = float(contact.get('Client_Value', 0))
-                current_properties = int(contact.get('No_of_Properties', 0))
-
-                print(f"Current client value: {current_client_value}")
-                print(f"Current properties count: {current_properties}")
-                
-                # Update contact with incremented values - add the new property count and value
-                update_contact_url = f"https://www.zohoapis.com/bigin/v2/Contacts/{contact_id}"
-                update_payload = {
-                    "data": [{
-                        "Client_Value": current_client_value + property_value,
-                        "No_of_Properties": current_properties + property_count
-                    }]
-                }
-                
-                # Update the contact with new values
-                update_response = requests.put(update_contact_url, headers=headers, json=update_payload)
-                if update_response.status_code not in [200, 201, 202]:
-                    print(f"[WARNING] Failed to update contact properties: {update_response.text}")
-        
         elif search_response.status_code == 204:
+        
             create_contact_url = "https://www.zohoapis.com/bigin/v2/Contacts"
             contact_data = {"data": [contact_payload]}
 
@@ -566,12 +501,21 @@ def data_to_crm(req, deal_data):
             return JsonResponse({'status': 'error', 'message': 'Failed to search for contact'}, status=400)
         
         print("Deal creation started")
-        # Remove our custom fields before creating the deal in Zoho
-        deal_payload_data = {k: v for k, v in deal_data.items() if k not in ['Property_Count', 'Property_Value']}
-        deal_payload_data['Contact_Name'] = {"id": contact_id}
-        
         deal_payload = {
-            "data": [deal_payload_data]
+            "data": [{
+                "Owner": deal_data["Owner"],
+                "Deal_Name": deal_data["Deal_Name"],
+                "Amount": deal_data["Amount"],
+                "Sub_Pipeline": deal_data["Sub_Pipeline"],
+                "Stage": deal_data["Stage"],
+                "Lead_Source": deal_data["Lead_Source"],
+                "Tag": deal_data["Tag"],
+                "Follow_up_date": deal_data["Follow_up_date"],
+                "Description": deal_data["Description"],
+                "Pipeline": deal_data["Pipeline"],
+                "Unit_No": deal_data["Unit_No"],
+                "Contact_Name": {"id": contact_id},
+            }]
         }
         
         deal_url = "https://www.zohoapis.com/bigin/v2/Pipelines"
@@ -582,7 +526,7 @@ def data_to_crm(req, deal_data):
             if 'data' in deal_resp_data and 'details' in deal_resp_data['data'][0]:
                 print(f"New lead added")
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                success_message = f"{timestamp} | New Lead added successfully --- {deal_data['Deal_Name']} with {property_count} properties"
+                success_message = f"{timestamp} | New Lead added successfully --- {deal_data['Deal_Name']}"
                 return success_message
             else:
                 print(f"Failed to create deal")
@@ -597,7 +541,6 @@ def data_to_crm(req, deal_data):
     except Exception as e:
         print(f"Exception in process_deal_data: {str(e)}")
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
-    
 
 def clear_task(request):
     """Clear completed or failed tasks to free memory"""
