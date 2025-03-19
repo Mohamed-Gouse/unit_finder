@@ -18,6 +18,47 @@ token = 'apify_api_HMvSVv0jj56tMSsHcg0wEWGnOUkOOc1sN8o1'
 EXCEL_DIR = "property_exports"
 os.makedirs(EXCEL_DIR, exist_ok=True)
 
+class TokenHandler:
+    def __init__(self, session):
+        self.session = session
+        self.zoho_refresh_token = "1000.95b91213dae5a69797e85808d5c67885.1e6fc7447945dffc3a1806cb348aab22"
+        self.zoho_client_id = "1000.ZLDMF5RCB0YSUH3CAMRXNW7RUH1YDG"
+        self.zoho_client_secret = "3e5a1be504005d2a0eeb5a542b1be58ef0f0836c7e"
+        self.zoho_token_url = "https://accounts.zoho.com/oauth/v2/token"
+
+    def regenerate_zoho_token(self):
+        """Regenerate Zoho access token using refresh token."""
+        data = {
+            'refresh_token': self.zoho_refresh_token,
+            'client_id': self.zoho_client_id,
+            'client_secret': self.zoho_client_secret,
+            'grant_type': 'refresh_token'
+        }
+
+        response = requests.post(self.zoho_token_url, data=data)
+
+        if response.status_code == 200:
+            result = response.json()
+            self.session['zoho_access_token'] = result['access_token']
+            self.session['zoho_token_expiration'] = time.time() + 3600
+            return result['access_token']
+        raise ValueError(f"Failed to regenerate Zoho token: {response.json()}")
+
+    def get_zoho_token(self):
+        """Get valid Zoho token, regenerating if needed."""
+        access_token = self.session.get('zoho_access_token')
+        expiration_time = self.session.get('zoho_token_expiration', 0)
+
+        if access_token and time.time() < expiration_time:
+            print('Zoho Token Exists')
+            return access_token
+        return self.regenerate_zoho_token()
+
+    def unset_zoho_token(self):
+        """Remove Zoho token from session."""
+        self.session.pop('zoho_access_token', None)
+        self.session.pop('zoho_token_expiration', None)
+
 # Dictionary to track processing status
 processing_tasks = {}
 
@@ -175,6 +216,42 @@ def index(request):
             
     return render(request, 'index.html', context)
 
+def get_deal_owners(req):
+    # Fetch and return agents details
+    token_handler = TokenHandler(req.session)
+    zoho_token = token_handler.get_zoho_token()
+
+    url = "https://www.zohoapis.com/bigin/v2/users"
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Zoho-oauthtoken {zoho_token}'
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        search_user_response = response.json()
+        if 'users' in search_user_response:
+            active_users = [
+                {"id": user["id"], "name": user["full_name"]}
+                for user in search_user_response["users"]
+                if user["status"] == "active"
+            ]
+            return active_users
+        else:
+            return []
+    else:
+        return []
+
+
+
+    # deal_owners = [
+    #     {"id": 1, "name": "Alex Johnson"},
+    #     {"id": 2, "name": "Maria Garcia"},
+    #     {"id": 3, "name": "James Wilson"},
+    #     {"id": 4, "name": "Sarah Ahmed"},
+    #     {"id": 5, "name": "David Lee"}
+    # ]
+    # return deal_owners
+
 def check_status(request):
     """AJAX endpoint to check processing status"""
     task_id = request.GET.get('task_id')
@@ -195,6 +272,11 @@ def check_status(request):
         'last_update': processor.last_update.strftime("%H:%M:%S")
     }
     
+    # Add real-time data preview as processing happens
+    if processor.processed_data:
+        df = pd.DataFrame(processor.processed_data)
+        response_data['preview_html'] = df.to_html(classes='table table-striped table-hover', index=False)
+    
     # Add download information if completed
     if processor.status == 'completed':
         response_data['excel_filename'] = os.path.basename(processor.excel_filename)
@@ -204,6 +286,9 @@ def check_status(request):
             df = pd.DataFrame(processor.processed_data)
             response_data['table_html'] = df.to_html(classes='table table-striped table-hover', index=False)
             response_data['data_json'] = json.dumps(processor.processed_data)
+        
+        # Add deal owners data
+        response_data['deal_owners'] = get_deal_owners(request)
     
     return JsonResponse(response_data)
 
@@ -287,25 +372,232 @@ def download_excel(request):
         return HttpResponse(f"Error processing request: {str(e)}", status=500)
     
 @csrf_exempt
+@csrf_exempt
 def add_to_crm(request):
     """Receive property data and add it to CRM."""
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
             property_data = data.get('property', [])
+            deal_owner_id = data.get('deal_owner_id')
+            tags = data.get('tags', '')
             
             if not property_data:
                 return JsonResponse({'status': 'error', 'message': 'No property data received'}, status=400)
             
-            print(f"Adding {len(property_data)} properties to CRM")
-            print(f"Adding {property_data} properties to CRM")
+            if not deal_owner_id:
+                return JsonResponse({'status': 'error', 'message': 'Deal owner is required'}, status=400)
+            
+            formatted_tags = tags
+            if tags:
+                formatted_tags = ', '.join(word.title() for word in tags.split(','))
+            else:
+                formatted_tags = "Warm Lead"
+
+            # Group properties by owner_phone
+            owner_properties = {}
+            for lead in property_data:
+                if lead['owner_name'] == 'NILL' or not lead['owner_phone']:
+                    continue
+                
+                phone = str(lead['owner_phone']).replace('+', '')
+                formatted_phone = f"+{phone.replace('-', ' ')}"
+                
+                if formatted_phone not in owner_properties:
+                    owner_properties[formatted_phone] = {
+                        'owner_name': lead['owner_name'],
+                        'properties': [],
+                        'total_amount': 0,
+                        'permit_types': set()
+                    }
+                
+                owner_properties[formatted_phone]['properties'].append(lead)
+                owner_properties[formatted_phone]['total_amount'] += float(lead.get('Amount', 0))
+                
+                permit_type = lead.get('permit_type', '').lower() if lead.get('permit_type') else ''
+                if permit_type:
+                    owner_properties[formatted_phone]['permit_types'].add(permit_type)
+            
+            # Process each owner's grouped properties
+            for phone, owner_data in owner_properties.items():
+                # Aggregate unit numbers and URLs
+                unit_numbers = []
+                urls = []
+                for prop in owner_data['properties']:
+                    units = prop.get('UnitNumber', '').split(', ')
+                    unit_numbers.extend(units)
+                    if prop.get('url'):
+                        urls.append(prop.get('url'))
+                
+                # Remove duplicates and sort
+                unit_numbers = sorted(set(unit_numbers))
+                urls = sorted(set(urls))
+                
+                # Create deal name from first unit and building
+                first_property = owner_data['properties'][0]
+                building_name = first_property.get('BuildingNameEn', '')
+                
+                if len(unit_numbers) > 1:
+                    deal_name = f"{unit_numbers[0]} # {building_name} (+{len(unit_numbers)-1} more)"
+                else:
+                    deal_name = f"{unit_numbers[0]} | {building_name}"
+                
+                # Determine pipeline based on permit types
+                pipeline_name = 'Seller Pipeline' if any(pt in ['sell', 'buy'] for pt in owner_data['permit_types']) else 'Landlord Pipeline'
+                
+                # Create deal data with all properties
+                deal_data = {
+                    "Owner": {"id": deal_owner_id},
+                    "Deal_Name": deal_name,
+                    "Amount": owner_data['total_amount'],
+                    "Sub_Pipeline": pipeline_name,
+                    "Stage": "New enquiry",
+                    "Lead_Source": "Campaign",
+                    "Tag": formatted_tags,
+                    "Follow_up_date": datetime.today().strftime('%Y-%m-%dT%H:%M:%S'),
+                    "Last_Name": owner_data['owner_name'],
+                    "Phone": phone,
+                    "Description": ', '.join(urls),
+                    "Unit_No": ', '.join(unit_numbers),
+                    "Property_Count": len(unit_numbers),  # New field for property count
+                    "Property_Value": owner_data['total_amount'],  # New field for total value
+                    "Pipeline": {
+                        "name": "Real Estate Pipeline",
+                        "id": "6428826000000091023"
+                    },
+                }
+
+                response = data_to_crm(request, deal_data)
+                print(response)
                 
             return JsonResponse({'status': 'success', 'message': 'Added to CRM successfully'})
             
         except json.JSONDecodeError as e:
             return JsonResponse({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}, status=400)
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': f'Error processing data: {str(e)}'}, status=500)
     
     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+
+def data_to_crm(req, deal_data):
+    try:
+        token_handler = TokenHandler(req.session)
+        zoho_token = token_handler.get_zoho_token()
+
+        # Extract property count and value for contact creation/update
+        property_count = deal_data.get('Property_Count', 1)
+        property_value = deal_data.get('Property_Value', deal_data['Amount'])
+
+        contact_payload = {
+            'Last_Name': deal_data['Last_Name'],
+            'Phone': deal_data['Phone'],
+            'Lead_Source': deal_data['Lead_Source'],
+            'Client_Value': property_value,
+            'No_of_Properties': property_count
+        }
+        contact_phone = deal_data['Phone']
+
+        # Prepare search URL
+        search_url = f"https://www.zohoapis.com/bigin/v2/Contacts/search?phone={contact_phone}"
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Zoho-oauthtoken {zoho_token}'
+        }
+
+        search_response = requests.get(search_url, headers=headers)
+        contact_id = None
+        if search_response.status_code == 200:
+            search_response_json = search_response.json()
+            if 'data' in search_response_json and search_response_json['data']:
+                # Contact exists
+                contact = search_response_json['data'][0]
+                contact_id = contact.get('id')
+                
+                # Get current values for existing contact
+                current_client_value = float(contact.get('Client_Value', 0))
+                current_properties = int(contact.get('No_of_Properties', 0))
+
+                print(f"Current client value: {current_client_value}")
+                print(f"Current properties count: {current_properties}")
+                
+                # Update contact with incremented values - add the new property count and value
+                update_contact_url = f"https://www.zohoapis.com/bigin/v2/Contacts/{contact_id}"
+                update_payload = {
+                    "data": [{
+                        "Client_Value": current_client_value + property_value,
+                        "No_of_Properties": current_properties + property_count
+                    }]
+                }
+                
+                # Update the contact with new values
+                update_response = requests.put(update_contact_url, headers=headers, json=update_payload)
+                if update_response.status_code not in [200, 201, 202]:
+                    print(f"[WARNING] Failed to update contact properties: {update_response.text}")
+        
+        elif search_response.status_code == 204:
+            create_contact_url = "https://www.zohoapis.com/bigin/v2/Contacts"
+            contact_data = {"data": [contact_payload]}
+
+            # Creating a new contact
+            contact_response = requests.post(create_contact_url, headers=headers, json=contact_data)
+            contact_resp_json = contact_response.json()
+
+            if contact_response.status_code == 201 and 'data' in contact_resp_json:
+                created_contact = contact_resp_json['data'][0]
+                contact_id = created_contact.get('details', {}).get('id')
+
+                if contact_id:
+                    tag_url = f"https://www.zohoapis.com/bigin/v1/Contacts/actions/add_tags?ids={contact_id}&tag_names={deal_data['Tag']}&over_write=true"
+                    tag_response = requests.post(tag_url, headers=headers)
+                    print(f"[LOG] Contact tag response: {tag_response.text}")
+                else:
+                    print("[ERROR] Failed to extract contact ID from response")
+                    token_handler.unset_zoho_token()
+                    return JsonResponse({'status': 'error', 'message': 'Failed to create contact 1'}, status=400)
+            else:
+                print(f"[ERROR] Contact creation failed: {contact_response.text}")
+                token_handler.unset_zoho_token()
+                return JsonResponse({'status': 'error', 'message': 'Failed to create contact 2'}, status=400)
+            
+        else:
+            print(f"[ERROR] Contact search failed: {search_response.text}")
+            token_handler.unset_zoho_token()
+            return JsonResponse({'status': 'error', 'message': 'Failed to search for contact'}, status=400)
+        
+        print("Deal creation started")
+        # Remove our custom fields before creating the deal in Zoho
+        deal_payload_data = {k: v for k, v in deal_data.items() if k not in ['Property_Count', 'Property_Value']}
+        deal_payload_data['Contact_Name'] = {"id": contact_id}
+        
+        deal_payload = {
+            "data": [deal_payload_data]
+        }
+        
+        deal_url = "https://www.zohoapis.com/bigin/v2/Pipelines"
+        deal_response = requests.post(deal_url, headers=headers, json=deal_payload)
+        
+        if deal_response.status_code == 201:
+            deal_resp_data = deal_response.json()
+            if 'data' in deal_resp_data and 'details' in deal_resp_data['data'][0]:
+                print(f"New lead added")
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                success_message = f"{timestamp} | New Lead added successfully --- {deal_data['Deal_Name']} with {property_count} properties"
+                return success_message
+            else:
+                print(f"Failed to create deal")
+                print("Failed to extract deal ID from response")
+                token_handler.unset_zoho_token()
+                return JsonResponse({'status': 'error', 'message': 'Failed to create deal'}, status=400)
+        else:
+            print(f"Error creating deal: {deal_response.text}")
+            token_handler.unset_zoho_token()
+            return JsonResponse({'status': 'error', 'message': 'Failed to create deal'}, status=400)
+            
+    except Exception as e:
+        print(f"Exception in process_deal_data: {str(e)}")
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+    
 
 def clear_task(request):
     """Clear completed or failed tasks to free memory"""

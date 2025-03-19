@@ -47,6 +47,18 @@
             </div>
         </div>
         
+        <!-- Live Preview Section -->
+        <div id="livePreviewSection" class="mt-3">
+            <h5>Live Data Preview</h5>
+            <div class="table-responsive">
+                <div id="previewTableContainer">
+                    <div class="text-center">
+                        <p class="text-muted">Processing data, preview will appear here...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <div id="downloadSection" class="mt-3 d-none">
             <div class="alert alert-success">
                 <h5>Processing Complete!</h5>
@@ -103,6 +115,25 @@
             </div>
         </div>
         
+        <!-- Additional CRM Fields -->
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="form-group mb-3">
+                    <label for="dealOwnerSelect" class="form-label">Deal Owner</label>
+                    <select class="form-select" id="dealOwnerSelect" required>
+                        <option value="">Select Deal Owner</option>
+                        <!-- Options will be populated dynamically -->
+                    </select>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="form-group mb-3">
+                    <label for="tagsInput" class="form-label">Tags</label>
+                    <textarea class="form-control" id="tagsInput" rows="2" placeholder="Enter tags separated by commas"></textarea>
+                </div>
+            </div>
+        </div>
+        
         <div class="mt-3">
             <a id="downloadResultsBtn" href="#" class="btn btn-success">
                 <i class="fa fa-download"></i> Download as Excel
@@ -125,6 +156,7 @@
             let processingInterval;
             let resultData = null;
             let excelFilename = null;
+            let dealOwners = [];
             
             // Create toast objects
             const crmToast = new bootstrap.Toast(document.getElementById('crmToast'));
@@ -132,7 +164,7 @@
             
             // Start polling for status updates
             checkProcessingStatus();
-            processingInterval = setInterval(checkProcessingStatus, 2000);
+            processingInterval = setInterval(checkProcessingStatus, 5000);
             
             function checkProcessingStatus() {
                 fetch(`/check-status/?task_id=${taskId}`)
@@ -150,6 +182,11 @@
                         document.getElementById('lastUpdate').textContent = 
                             `Last update: ${data.last_update}`;
                         
+                        // Update live preview if data is available
+                        if (data.preview_html) {
+                            document.getElementById('previewTableContainer').innerHTML = data.preview_html;
+                        }
+                        
                         // Check if completed
                         if (data.status === 'completed') {
                             clearInterval(processingInterval);
@@ -157,6 +194,12 @@
                             // Store data for later use
                             if (data.data_json) {
                                 resultData = data.data_json;
+                            }
+                            
+                            // Store deal owners
+                            if (data.deal_owners) {
+                                dealOwners = data.deal_owners;
+                                populateDealOwners();
                             }
                             
                             // Show download section
@@ -203,13 +246,29 @@
                     });
             }
             
+            // Populate deal owners dropdown
+            function populateDealOwners() {
+                const select = document.getElementById('dealOwnerSelect');
+                select.innerHTML = '<option value="">Select Deal Owner</option>';
+                
+                dealOwners.forEach(owner => {
+                    const option = document.createElement('option');
+                    option.value = owner.id;
+                    option.textContent = owner.name;
+                    select.appendChild(option);
+                });
+            }
+            
             // Set up "Return to form" button
             document.getElementById('returnToFormBtn').addEventListener('click', function() {
                 resultData = null;
                 excelFilename = null;
+                dealOwners = [];
                 
                 // Clear any DOM elements that might contain sensitive data
                 document.getElementById('tableContainer').innerHTML = '';
+                document.getElementById('dealOwnerSelect').innerHTML = '<option value="">Select Deal Owner</option>';
+                document.getElementById('tagsInput').value = '';
                 
                 // Optionally clear the task from server memory
                 if (taskId) {
@@ -236,6 +295,14 @@
                     return;
                 }
                 
+                const dealOwnerId = document.getElementById('dealOwnerSelect').value;
+                if (!dealOwnerId) {
+                    document.getElementById('errorToastBody').textContent = 'Please select a Deal Owner';
+                    errorToast.show();
+                    return;
+                }
+                
+                const tags = document.getElementById('tagsInput').value;
                 const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
                 const loadingBtn = this;
                 
@@ -249,7 +316,11 @@
                         'Content-Type': 'application/json',
                         'X-CSRFToken': csrftoken,
                     },
-                    body: JSON.stringify({ property: JSON.parse(resultData) })
+                    body: JSON.stringify({ 
+                        property: JSON.parse(resultData),
+                        deal_owner_id: dealOwnerId,
+                        tags: tags
+                    })
                 })
                 .then(response => response.json())
                 .then(data => {
