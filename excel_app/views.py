@@ -68,6 +68,7 @@ def process_files(request):
                 data_frame = data_frame[available_columns]
                 
                 data_frame['Mobile'] = data_frame['Mobile'].fillna('NILL').replace('', 'NILL')
+                data_frame = data_frame[data_frame['ProcedurePartyTypeNameEn'] == 'Buyer']
                 
                 if 'Regis' in data_frame.columns:
                     data_frame['Regis'] = pd.to_datetime(data_frame['Regis'], errors='coerce')
