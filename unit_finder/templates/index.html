@@ -226,6 +226,29 @@
                             setTimeout(() => {
                                 fetch(`/clear-task/?task_id=${taskId}`);
                             }, 5000);
+
+                            // Add "Share to WhatsApp" button functionality
+                            const shareToWhatsAppBtn = document.createElement('button');
+                            shareToWhatsAppBtn.className = 'btn btn-success ms-2';
+                            shareToWhatsAppBtn.innerHTML = '<i class="fa fa-whatsapp"></i> Share to WhatsApp';
+                            document.querySelector('.mt-3').appendChild(shareToWhatsAppBtn);
+
+                            shareToWhatsAppBtn.addEventListener('click', function() {
+                                if (!resultData) {
+                                    document.getElementById('errorToastBody').textContent = 'No data available to share';
+                                    errorToast.show();
+                                    return;
+                                }
+
+                                const processedData = JSON.parse(resultData);
+                                const formattedData = processedData.map(item => 
+                                    `*Url*: ${item.url}\n*Building*: ${item.BuildingNameEn}\n*Unit no*: ${item.UnitNumber}\n*Type*: ${item.rooms}\n*Owner Name*: ${item.owner_name}\n*Owner Phone*: ${item.owner_phone}\n`
+                                ).join('\n');
+
+                                const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(formattedData)}`;
+                                window.open(whatsappUrl, '_blank');
+                            });
+                            
                         }
                         else if (data.status.startsWith('failed')) {
                             // Show error section

@@ -12,7 +12,8 @@ from django.views.decorators.csrf import csrf_exempt
 import time
 from io import BytesIO
 
-token = 'apify_api_HMvSVv0jj56tMSsHcg0wEWGnOUkOOc1sN8o1'
+# token = 'apify_api_HMvSVv0jj56tMSsHcg0wEWGnOUkOOc1sN8o1'
+token = 'apify_api_Hkm0shzQFcbqP7x27cXsvqEsAotuRF3xRdlZ'
 
 # Base directory for storing Excel files with timestamps
 EXCEL_DIR = "property_exports"
