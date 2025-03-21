@@ -35,11 +35,9 @@ def process_files(request):
             try:
                 input_path = excel_file.file.path
                 
-                data_frame = pd.read_excel(input_path)
-                
-                base_columns = []
-                
-                optional_columns = [
+                data_frame = pd.read_excel(input_path, sheet_name=0)
+
+                sheet1_optional_columns = [
                     'Regis',
                     'ProcedureValue',
                     'Project',
@@ -57,27 +55,27 @@ def process_files(request):
                     'Area'
                 ]
 
-                available_columns = [col for col in base_columns + optional_columns if col in data_frame.columns]
-                missing_columns = [col for col in base_columns if col not in data_frame.columns]
+                sheet1_available_columns = [col for col in sheet1_optional_columns if col in data_frame.columns]
+                
+                missing_columns = [col for col in sheet1_optional_columns if col not in data_frame.columns]
                 if missing_columns:
                     error_message = f"Missing required columns in {excel_file.filename()}: {', '.join(missing_columns)}"
-                    messages.error(request, error_message)
-                    excel_file.delete()
-                    continue
+                    messages.warning(request, error_message)
 
-                data_frame = data_frame[available_columns]
+                data_frame = data_frame[sheet1_available_columns]
                 
-                data_frame['Mobile'] = data_frame['Mobile'].fillna('NILL').replace('', 'NILL')
-                data_frame = data_frame[data_frame['ProcedurePartyTypeNameEn'] == 'Buyer']
+                data_frame = data_frame.fillna('NIL').replace('', 'NIL')
+
+                data_frame['has_owner'] = ~data_frame[['NameEn', 'Mobile']].eq('NIL').all(axis=1)
                 
                 if 'Regis' in data_frame.columns:
                     data_frame['Regis'] = pd.to_datetime(data_frame['Regis'], errors='coerce')
 
-                data_frame = data_frame.sort_values(by='Regis', ascending=False)
+                data_frame = data_frame.sort_values(by=['has_owner', 'Regis'], ascending=[False, False])
 
                 data_frame.columns = data_frame.columns.str.strip().str.lower()
                 
-                deduplication_columns = ['building no', 'unitnumber', 'project', 'landnumber', 'size']
+                deduplication_columns = ['building no', 'buildingnameen', 'unitnumber', 'project', 'landnumber', 'procedurepartytypenameen']
 
                 available_columns = [col for col in deduplication_columns if col in data_frame.columns]
 
@@ -88,7 +86,9 @@ def process_files(request):
                 
                 filename = f"processed_{os.path.basename(input_path)}"
                 output_path = os.path.join(settings.PROCESSED_DIR, filename)
-                
+
+                data_frame = data_frame[data_frame['procedurepartytypenameen'] == 'Buyer']
+                data_frame.drop(columns=['has_owner'], inplace=True)
                 data_frame.to_excel(output_path, index=False)
                 
                 relative_path = os.path.join('processed', filename)
@@ -128,6 +128,15 @@ def download_file(request, file_id):
         return response
     
     messages.error(request, f"File {excel_file.processed_filename()} not found.")
+    return redirect('excel_app:index')
+
+def delete_file(request, file_id):
+    """Download a processed file."""
+    excel_file = get_object_or_404(ExcelFile, id=file_id, processed=True)
+    
+    excel_file.delete()
+    
+    messages.success(request, f"File {excel_file.processed_filename()} deleted successfully.")
     return redirect('excel_app:index')
 
 def merge_files(request):
