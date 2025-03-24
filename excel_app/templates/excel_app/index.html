@@ -34,6 +34,7 @@
                         {% endif %}
                         {% if files or merged_files %}
                         <a href="{% url 'excel_app:clear_files' %}" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete all files?')">Clear All Files</a>
+                        <a href="{% url 'excel_app:clear_master_data' %}" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete all files?')">Clear All Master Data</a>
                         {% endif %}
                     </div>
                 </div>

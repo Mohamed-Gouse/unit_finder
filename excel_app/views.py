@@ -5,7 +5,7 @@ from django.http import HttpResponse, FileResponse
 from django.conf import settings
 from django.contrib import messages
 from django.urls import reverse
-from .models import ExcelFile, MergedFile
+from .models import ExcelFile, MasterData, MergedFile
 import uuid
 
 def index(request):
@@ -20,7 +20,7 @@ def index(request):
     return render(request, 'excel_app/index.html', context)
 
 def process_files(request):
-    """Process uploaded Excel files."""
+    """Process uploaded Excel files and save data to database."""
     if request.method == 'POST':
         files = request.FILES.getlist('excel_files')
         
@@ -84,11 +84,13 @@ def process_files(request):
 
                     data_frame = data_frame.drop_duplicates(subset=available_columns, keep='first')
                 
-                filename = f"processed_{os.path.basename(input_path)}"
-                output_path = os.path.join(settings.PROCESSED_DIR, filename)
-
+                # Filter for buyers only
                 data_frame = data_frame[data_frame['procedurepartytypenameen'] == 'Buyer']
                 data_frame.drop(columns=['has_owner'], inplace=True)
+                
+                # Save processed file
+                filename = f"processed_{os.path.basename(input_path)}"
+                output_path = os.path.join(settings.PROCESSED_DIR, filename)
                 data_frame.to_excel(output_path, index=False)
                 
                 relative_path = os.path.join('processed', filename)
@@ -96,7 +98,44 @@ def process_files(request):
                 excel_file.processed = True
                 excel_file.save()
                 
-                messages.success(request, f"Successfully processed {excel_file.filename()}")
+                # Save each row to the database
+                # rows_saved = 0
+                # for _, row in data_frame.iterrows():
+                #     # Create a dictionary with the model field names and values
+                #     master_data_dict = {
+                #         'regis': row.get('regis', None),
+                #         'procedure_value': row.get('procedurevalue', None) if row.get('procedurevalue', 'NIL') != 'NIL' else None,
+                #         'project': row.get('project', None),
+                #         'building_no': row.get('building no', None),
+                #         'building_name_en': row.get('buildingnameen', None),
+                #         'size': row.get('size', None) if row.get('size', 'NIL') != 'NIL' else None,
+                #         'unit_number': row.get('unitnumber', None),
+                #         'property_type_en': row.get('propertytypeen', None),
+                #         'land_number': row.get('landnumber', None),
+                #         'procedure_party_type_name_en': row.get('procedurepartytypenameen', None),
+                #         'name_en': row.get('nameen', None),
+                #         'mobile': row.get('mobile', None),
+                #         'country_name_en': row.get('countrynameen', None),
+                #         'birth_date': row.get('birthdate', None) if row.get('birthdate', 'NIL') != 'NIL' else None,
+                #         'area': row.get('area', None) if row.get('area', 'NIL') != 'NIL' else None
+                #     }
+                    
+                #     # Handle numeric fields that might be 'NIL' strings
+                #     numeric_fields = ['procedure_value', 'size']
+                #     for field in numeric_fields:
+                #         if master_data_dict[field] == 'NIL':
+                #             master_data_dict[field] = None
+                    
+                #     # Handle date field
+                #     if master_data_dict['birth_date'] == 'NIL':
+                #         master_data_dict['birth_date'] = None
+                    
+                #     # Create and save the MasterData instance
+                #     master_data = MasterData(**master_data_dict)
+                #     master_data.save()
+                #     rows_saved += 1
+                
+                messages.success(request, f"Successfully processed {excel_file.filename()} and saved {rows_saved} records to database")
                 
             except Exception as e:
                 messages.error(request, f"Error processing {excel_file.filename()}: {str(e)}")
@@ -205,4 +244,10 @@ def clear_files(request):
             os.unlink(file_path)
     
     messages.success(request, "All files have been cleared.")
+    return redirect('excel_app:index')
+
+def clear_master_data(request):
+    MasterData.objects.all().delete()
+    
+    messages.success(request, "All data's have been cleared.")
     return redirect('excel_app:index')

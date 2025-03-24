@@ -61,3 +61,23 @@ class MergedFile(models.Model):
             'owner_name': 'NILL',
             'owner_phone': 'NILL'
         }
+
+class MasterData(models.Model):
+    regis = models.CharField(max_length=255, null=True, blank=True)
+    procedure_value = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    project = models.CharField(max_length=255, null=True, blank=True)
+    building_no = models.CharField(max_length=255, null=True, blank=True)
+    building_name_en = models.CharField(max_length=255, null=True, blank=True)
+    size = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    unit_number = models.CharField(max_length=255, null=True, blank=True)
+    property_type_en = models.CharField(max_length=255, null=True, blank=True)
+    land_number = models.CharField(max_length=255, null=True, blank=True)
+    procedure_party_type_name_en = models.CharField(max_length=255, null=True, blank=True)
+    name_en = models.CharField(max_length=255, null=True, blank=True)
+    mobile = models.CharField(max_length=20, null=True, blank=True)
+    country_name_en = models.CharField(max_length=255, null=True, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    area = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.name_en} - {self.unit_number}"
