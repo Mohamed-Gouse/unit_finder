@@ -69,6 +69,9 @@
                 <button id="viewResultsBtn" class="btn btn-primary">
                     <i class="fa fa-table"></i> View Results
                 </button>
+                <button id="shareToWhatsAppBtn" class="btn btn-primary">
+                    <i class="fa fa-whatsapp"></i> Share to WhatsApp
+                </button>
             </div>
         </div>
         
@@ -91,6 +94,13 @@
             <div class="mb-3">
                 <label for="urls" class="form-label">Property URLs (one per line)</label>
                 <textarea class="form-control" placeholder="Paste URLs here..." name="urls" rows="5"></textarea>
+            </div>
+            <div class="mb-3 w-50">
+                <label for="source" class="form-label">Source</label>
+                <select class="form-select" name="source" required>
+                    <option value="bot">Bot</option>
+                    <option value="api" selected>API</option>
+                </select>
             </div>
             <button type="submit" class="btn btn-primary">
                 <i class="fa fa-play"></i> Process URLs
@@ -141,6 +151,10 @@
             
             <button id="addToCrmBtn" class="btn btn-primary ms-2">
                 <i class="fa fa-plus"></i> Add to CRM
+            </button>
+            
+            <button id="shareToWhatsAppBtn" class="btn btn-primary ms-2">
+                <i class="fa fa-whatsapp"></i> Share to WhatsApp
             </button>
         </div>
     </div>
@@ -226,29 +240,44 @@
                             setTimeout(() => {
                                 fetch(`/clear-task/?task_id=${taskId}`);
                             }, 5000);
-
-                            // Add "Share to WhatsApp" button functionality
-                            const shareToWhatsAppBtn = document.createElement('button');
-                            shareToWhatsAppBtn.className = 'btn btn-success ms-2';
-                            shareToWhatsAppBtn.innerHTML = '<i class="fa fa-whatsapp"></i> Share to WhatsApp';
-                            document.querySelector('.mt-3').appendChild(shareToWhatsAppBtn);
-
-                            shareToWhatsAppBtn.addEventListener('click', function() {
+    
+                            // Add "Share to WhatsApp" button functionality in processing section
+                            const processingShareToWhatsAppBtn = document.getElementById('shareToWhatsAppBtn');
+    
+                            processingShareToWhatsAppBtn.addEventListener('click', function() {
                                 if (!resultData) {
                                     document.getElementById('errorToastBody').textContent = 'No data available to share';
                                     errorToast.show();
                                     return;
                                 }
-
+    
                                 const processedData = JSON.parse(resultData);
                                 const formattedData = processedData.map(item => 
                                     `*Url*: ${item.url}\n*Building*: ${item.BuildingNameEn}\n*Unit no*: ${item.UnitNumber}\n*Type*: ${item.rooms}\n*Owner Name*: ${item.owner_name}\n*Owner Phone*: ${item.owner_phone}\n`
                                 ).join('\n');
-
+    
                                 const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(formattedData)}`;
                                 window.open(whatsappUrl, '_blank');
                             });
+    
+                            // Add "Share to WhatsApp" button functionality in results section
+                            const resultsShareToWhatsAppBtn = document.getElementById('resultsSection').querySelector('#shareToWhatsAppBtn');
                             
+                            resultsShareToWhatsAppBtn.addEventListener('click', function() {
+                                if (!resultData) {
+                                    document.getElementById('errorToastBody').textContent = 'No data available to share';
+                                    errorToast.show();
+                                    return;
+                                }
+    
+                                const processedData = JSON.parse(resultData);
+                                const formattedData = processedData.map(item => 
+                                    `*Url*: ${item.url}\n*Building*: ${item.BuildingNameEn}\n*Unit no*: ${item.UnitNumber}\n*Type*: ${item.rooms}\n*Owner Name*: ${item.owner_name}\n*Owner Phone*: ${item.owner_phone}\n`
+                                ).join('\n');
+    
+                                const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(formattedData)}`;
+                                window.open(whatsappUrl, '_blank');
+                            });
                         }
                         else if (data.status.startsWith('failed')) {
                             // Show error section

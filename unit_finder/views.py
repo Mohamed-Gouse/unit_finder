@@ -1,17 +1,20 @@
 import requests
 import pandas as pd
 from django.shortcuts import render
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse
 import json, os
 from excel_app.models import MergedFile
 from datetime import datetime
 import threading
-import queue
 import uuid
 from django.views.decorators.csrf import csrf_exempt
 import time
 from io import BytesIO
-
+from telethon import TelegramClient, events
+from queue import Queue
+import asyncio
+import logging
+import re
 token = 'apify_api_ccc4jjrBaNvKbAO8CE9LWOdSAytJSy1TDfSS'
 
 # Base directory for storing Excel files with timestamps
@@ -59,13 +62,139 @@ class TokenHandler:
         self.session.pop('zoho_access_token', None)
         self.session.pop('zoho_token_expiration', None)
 
+class URLProcessorUser:
+    def __init__(self, api_id, api_hash, bot_user_id):
+        print("Initializing Telegram User Client...")
+        self.client = TelegramClient("unit_finder", api_id, api_hash)
+        self.bot_user_id = bot_user_id
+        self.queue = Queue()
+        self.responses = []
+        self.last_message = None
+        self.response_received = asyncio.Event()
+        self.response_count = 0
+        print("Telegram User Client initialized successfully.")
+
+        @self.client.on(events.NewMessage(from_users=self.bot_user_id))
+        async def handle_responses(event):
+            message_text = event.message.text
+            print(f"Received message: {message_text[:50]}..." if len(message_text) > 50 else f"Received message: {message_text}")
+            
+            self.responses.append(message_text)
+            self.last_message = event.message
+            self.response_count += 1
+
+            if event.message.reply_markup:
+                buttons = [btn.text for row in event.message.reply_markup.rows for btn in row.buttons]
+                print(f"Buttons available: {buttons}")
+
+            self.response_received.set()
+
+    async def send_message_and_wait_for_response(self, message, expected_responses=1):
+        """ Sends a message and waits for the specified number of responses """
+        try:
+            self.response_received.clear()
+            initial_count = self.response_count
+            await self.client.send_message(self.bot_user_id, message)
+
+            while self.response_count < initial_count + expected_responses:
+                try:
+                    await asyncio.wait_for(self.response_received.wait(), 10)
+                    self.response_received.clear()
+                except asyncio.TimeoutError:
+                    print(f"Timeout waiting for response after sending: {message}")
+                    break
+            
+            return self.last_message
+        except Exception as ex:
+            logging.error(f"Error in send_message_and_wait_for_response: {ex}")
+            return None
+
+    async def click_button_containing(self, button_text, message, expected_responses=1):
+        if not message or not message.reply_markup:
+            print(f"No reply markup available to click button containing '{button_text}'")
+            return False
+
+        clicked = False
+        for row_idx, row in enumerate(message.reply_markup.rows):
+            for btn_idx, button in enumerate(row.buttons):
+                button_label = getattr(button, "text", "")
+                if button_text.lower() in button_label.lower():
+                    print(f"Clicking button '{button_label}'...")
+                    
+                    self.response_received.clear()
+                    initial_count = self.response_count
+                    await message.click(row_idx, btn_idx)
+                    clicked = True
+
+                    while self.response_count < initial_count + expected_responses:
+                        try:
+                            await asyncio.wait_for(self.response_received.wait(), 10)
+                            self.response_received.clear()
+                        except asyncio.TimeoutError:
+                            print(f"Timeout waiting for response after clicking: {button_label}")
+                            break
+                    
+                    return True
+        
+        if not clicked:
+            print(f"No button containing '{button_text}' found in available buttons")
+        return False
+
+    async def process_url(self, url):
+        try:
+            self.responses = []
+            self.last_message = None
+            self.response_count = 0
+            
+            print("\n=== Step 1: Sending /start command ===")
+            message = await self.send_message_and_wait_for_response("/start", expected_responses=2)
+            
+            print("\n=== Step 2: Clicking first 'Get Unit' button ===")
+            if message:
+                await self.click_button_containing("Get Unit", message, expected_responses=1)
+            else:
+                print("No message object available after /start")
+            
+            print(f"\n=== Step 3: Sending URL: {url} ===")
+            message = await self.send_message_and_wait_for_response(url, expected_responses=2)
+            
+            print("\n=== Step 4: Clicking second 'Get Unit' button after URL submission ===")
+            if self.last_message:
+                await self.click_button_containing("Get Unit", self.last_message, expected_responses=1)
+
+            return self.responses[-1] if self.responses else None
+
+        except Exception as ex:
+            logging.error(f"Error processing URL {url}: {ex}")
+            return None
+
+    def parse_response(self, url, response: str) -> dict:
+        """ Extracts relevant information from the response """
+        data = {
+            "url": url,
+            "area": re.search(r"• Area:\s*(.+)", response).group(1) if re.search(r"• Area:\s*(.+)", response) else "",
+            "master_project": re.search(r"• Master Project:\s*(.+)", response).group(1) if re.search(r"• Master Project:\s*(.+)", response) else "",
+            "BuildingNameEn": re.search(r"• Project:\s*(.+)", response).group(1) if re.search(r"• Project:\s*(.+)", response) else "",
+            "UnitNumber": re.search(r"• 🔑 Property Number:\s*(.+)", response).group(1) if re.search(r"• 🔑 Property Number:\s*(.+)", response) else "",
+            "property_type": re.search(r"• Type:\s*(.+)", response).group(1) if re.search(r"• Type:\s*(.+)", response) else "",
+            "size": re.search(r"• Area:\s*(.+?)\s*sqm", response).group(1) if re.search(r"• Area:\s*(.+?)\s*sqm", response) else "",
+            "rooms": re.search(r"• Rooms:\s*(.+)", response).group(1) if re.search(r"• Rooms:\s*(.+)", response) else "",
+        }
+
+        if not any(data[field] for field in data if field != "url"):
+            print("All extracted fields are empty. Setting values to 'null'.")
+            for field in data:
+                if field != "url":
+                    data[field] = "null"
+        return data
+
 # Dictionary to track processing status
 processing_tasks = {}
-
 class PropertyProcessor:
-    def __init__(self, task_id, urls_list):
+    def __init__(self, task_id, urls_list, source):
         self.task_id = task_id
         self.urls_list = urls_list
+        self.source = source
         self.processed_data = []
         self.total_urls = len(urls_list)
         self.processed_count = 0
@@ -93,8 +222,16 @@ class PropertyProcessor:
             merged_file = MergedFile.objects.order_by('-created_at').first()
             
             for url in self.urls_list:
-                # Process single URL
-                url_data = self._process_single_url(url, merged_file)
+                # Process URL based on source
+                if self.source == 'api':
+                    url_data = self._process_api_url(url, merged_file)
+                    print(url_data)
+                elif self.source == 'bot':
+                    url_data = self._process_bot_url(url, merged_file)
+                    print(url_data)
+                else:
+                    url_data = []
+                    print(f"Unknown source: {self.source}")
                 
                 if url_data:
                     # Add to in-memory data
@@ -122,8 +259,8 @@ class PropertyProcessor:
             print(f"Error in processing task {self.task_id}: {str(e)}")
             self.status = f"failed: {str(e)}"
     
-    def _process_single_url(self, url, merged_file):
-        """Process a single URL and return the data"""
+    def _process_api_url(self, url, merged_file):
+        """Process a single URL using API and return the data (formerly _process_single_url)"""
         if not url.strip():
             return []
             
@@ -134,8 +271,6 @@ class PropertyProcessor:
         }
         
         try:
-
-            
             response = requests.post(
                 f"https://api.apify.com/v2/acts/dhrumil~uae-dubai-property-leads-finder/run-sync-get-dataset-items?token={token}",
                 json=data,
@@ -178,6 +313,58 @@ class PropertyProcessor:
         except Exception as e:
             print(f"General error processing {url}: {str(e)}")
             return []
+    
+    def _process_bot_url(self, url, merged_file):
+        API_ID = 28380388
+        API_HASH = "c48a883a9f4be7a6447dab0685fb6485"
+        BOT_USER_ID = "@finder_DXB_Bot"
+
+        try:
+            print("Processing URL with bot...")
+
+            async def process_with_bot():
+                try:
+                    processor = URLProcessorUser(API_ID, API_HASH, BOT_USER_ID)
+                    await processor.client.start()
+                    
+                    response = await processor.process_url(url)
+
+                    if response:
+                        extracted_data = processor.parse_response(url, response)
+                    else:
+                        extracted_data = {}
+
+                    return extracted_data
+                finally:
+                    await processor.client.disconnect()
+
+            extracted_data = asyncio.run(process_with_bot())
+
+            owner_details = {}
+            if merged_file:
+                building_name = extracted_data.get("BuildingNameEn", "")
+                unit_number = extracted_data.get("UnitNumber", "")
+                owner_details = merged_file.get_owner_details(building_name, unit_number)
+
+            return [{
+                'url': url.strip(),
+                "Area": extracted_data.get("area", "NIL"),
+                "BuildingNameEn": extracted_data.get("BuildingNameEn", "NIL"),
+                "UnitNumber": extracted_data.get("UnitNumber", "NIL"),
+                "property_type": extracted_data.get("property_type", "NIL"),
+                "size": extracted_data.get("size", "NIL"),
+                "rooms": extracted_data.get("rooms", "NIL"),
+                "Amount": "NIL",  # Placeholder value
+                "permit_end_date": "NIL",  # Placeholder value
+                "permit_type": "NIL",  # Placeholder value
+                "owner_name": owner_details.get('owner_name', 'NILL'),
+                "owner_phone": owner_details.get('owner_phone', 'NILL'),
+            }]
+
+        except Exception as e:
+            print(f"Bot processing error for {url}: {str(e)}")
+            return []
+        
 
 def index(request):
     """Main view for URL processing form and results display"""
@@ -191,17 +378,24 @@ def index(request):
         if 'urls' in request.POST:
             # Start new processing job
             urls = request.POST.get('urls', '').strip()
+            source = request.POST.get('source', '')
+            print(f"Received URLs: {urls}")
+            print(f"Received Source: {source}")
             urls_list = [url for url in urls.splitlines() if url.strip()]
             
             if not urls_list:
                 context['error'] = "Please provide at least one valid URL"
                 return render(request, 'index.html', context)
             
+            if not source or source not in ['api', 'bot']:
+                context['error'] = "Please select a valid source for processing (API or Bot)"
+                return render(request, 'index.html', context)
+            
             # Generate unique task ID
             task_id = str(uuid.uuid4())
             
-            # Create processor and start thread
-            processor = PropertyProcessor(task_id, urls_list)
+            # Create processor with source and start thread
+            processor = PropertyProcessor(task_id, urls_list, source)
             processing_tasks[task_id] = processor
             
             # Start processing in background
@@ -555,3 +749,4 @@ def clear_task(request):
             return JsonResponse({'status': 'error', 'message': 'Cannot clear active task'})
             
     return JsonResponse({'status': 'error', 'message': 'Invalid task ID'})
+

@@ -1,12 +1,11 @@
 import os
 import pandas as pd
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse, FileResponse
+from django.http import FileResponse
 from django.conf import settings
 from django.contrib import messages
-from django.urls import reverse
 from .models import ExcelFile, MasterData, MergedFile
-import uuid
+
 
 def index(request):
     """Homepage view for file upload."""
@@ -19,130 +18,217 @@ def index(request):
     }
     return render(request, 'excel_app/index.html', context)
 
+def old_data(excel_file):
+    """Process data from the first sheet."""
+    input_path = excel_file.file.path
+    data_frame = pd.read_excel(input_path, sheet_name=0)
+
+    sheet1_optional_columns = [
+        'Regis', 'ProcedureValue', 'Project', 'Building No', 'BuildingNameEn',
+        'Size', 'UnitNumber', 'PropertyTypeEn', 'LandNumber', 'ProcedurePartyTypeNameEn',
+        'NameEn', 'Mobile', 'CountryNameEn', 'BirthDate', 'Area'
+    ]
+
+    sheet1_available_columns = [col for col in sheet1_optional_columns if col in data_frame.columns]
+    missing_columns = [col for col in sheet1_optional_columns if col not in data_frame.columns]
+
+    data_frame = data_frame[sheet1_available_columns]
+    data_frame = data_frame.fillna('NIL').replace('', 'NIL')
+
+    data_frame['has_owner'] = ~data_frame[['NameEn', 'Mobile']].eq('NIL').all(axis=1)
+
+    if 'Regis' in data_frame.columns:
+        data_frame['Regis'] = pd.to_datetime(data_frame['Regis'], errors='coerce')
+
+    data_frame = data_frame.sort_values(by=['has_owner', 'Regis'], ascending=[False, False])
+    data_frame.columns = data_frame.columns.str.strip().str.lower()
+
+    deduplication_columns = ['building no', 'buildingnameen', 'unitnumber', 'project', 'landnumber', 'procedurepartytypenameen']
+    available_columns = [col for col in deduplication_columns if col in data_frame.columns]
+
+    if available_columns:
+        data_frame[available_columns] = data_frame[available_columns].astype(str)
+        data_frame = data_frame.drop_duplicates(subset=available_columns, keep='first')
+
+    if 'procedurepartytypenameen' in data_frame.columns:
+        data_frame = data_frame[data_frame['procedurepartytypenameen'] == 'Buyer']
+
+    if 'has_owner' in data_frame.columns:
+        data_frame.drop(columns=['has_owner'], inplace=True)
+
+    # Add source indicator column
+    data_frame['source'] = 'old'
+    
+    return data_frame, missing_columns
+
+def new_data(excel_file):
+    """Process data from the second sheet."""
+    try:
+        input_path = excel_file.file.path
+        data_frame = pd.read_excel(input_path, sheet_name=1)
+        
+        sheet2_optional_columns = [
+            'Date',
+            'Area',
+            'Transaction Date',
+            'Master Projects',
+            'Building 1',
+            'property_number',
+            'Property Type',
+            'Transaction Amount',
+            'Actual Size',
+            'LandNumber',
+            'Owner Name',
+            'Phone 1',
+            'Phone 2',
+            'Mobile 1',
+            'Mobile 2',
+            'Secondary Mobile'
+        ]
+        
+        sheet2_available_columns = [col for col in sheet2_optional_columns if col in data_frame.columns]
+        missing_columns = [col for col in sheet2_optional_columns if col not in data_frame.columns]
+        
+        # Only keep available columns
+        data_frame = data_frame[sheet2_available_columns]
+        data_frame = data_frame.fillna('NIL').replace('', 'NIL')
+
+        if 'Date' in data_frame.columns:
+            data_frame['Date'] = pd.to_datetime(data_frame['Date'], errors='coerce')
+        
+        if 'Transaction Date' in data_frame.columns:
+            data_frame['Transaction Date'] = pd.to_datetime(data_frame['Transaction Date'], errors='coerce')
+        
+        # Process phone numbers
+        phone_fields = ['Phone 1', 'Phone 2', 'Mobile 1', 'Mobile 2', 'Secondary Mobile']
+        phone_fields = [f for f in phone_fields if f in data_frame.columns]
+        
+        def pick_best_number(row):
+            numbers = [
+                str(row[col]) for col in phone_fields 
+                if pd.notna(row[col]) and str(row[col]).strip() not in ['', '#N/A', 'NIL']
+            ]
+            if not numbers:
+                return 'NIL'
+            num_counts = {num: numbers.count(num) for num in numbers}
+            best_number = max(num_counts, key=lambda x: (num_counts[x], numbers.index(x)))
+            return best_number
+        
+        if phone_fields:
+            data_frame['Selected Phone'] = data_frame.apply(pick_best_number, axis=1)
+            data_frame.drop(columns=phone_fields, inplace=True)
+        else:
+            data_frame['Selected Phone'] = 'NIL'
+
+        # Remove duplicate properties based on specified columns
+        deduplication_columns = ['Building 1', 'property_number', 'project', 'LandNumber', 'Master Projects', 'Actual Size']
+        available_columns = [col for col in deduplication_columns if col in data_frame.columns]
+
+        if available_columns:
+            data_frame[available_columns] = data_frame[available_columns].astype(str)
+            data_frame = data_frame.drop_duplicates(subset=available_columns, keep='first')
+        
+        # Create mapping dictionary for standardizing column names
+        column_mapping = {
+            'Date': 'regis',
+            'Transaction Date': 'regis',
+            'Master Projects': 'project',
+            'Building 1': 'buildingnameen',
+            'property_number': 'unitnumber',
+            'Property Type': 'propertytypeen',
+            'Transaction Amount': 'procedurevalue',
+            'Actual Size': 'size',
+            'LandNumber': 'landnumber',
+            'Owner Name': 'nameen',
+            'Selected Phone': 'mobile',
+            'Area': 'area'
+        }
+        
+        # Only rename columns that exist in the dataframe
+        rename_mapping = {k: v for k, v in column_mapping.items() if k in data_frame.columns}
+        data_frame = data_frame.rename(columns=rename_mapping)
+        
+        # Ensure datetime format for regis column
+        if 'regis' in data_frame.columns:
+            data_frame['regis'] = pd.to_datetime(data_frame['regis'], errors='coerce')
+        
+        # Add source indicator column
+        data_frame['source'] = 'new'
+        
+        return data_frame, missing_columns
+    except Exception as e:
+        raise Exception(f"Error processing sheet 2: {str(e)}")
+
 def process_files(request):
-    """Process uploaded Excel files and save data to database."""
+    """Process uploaded Excel files with two sheets and concatenate them."""
     if request.method == 'POST':
         files = request.FILES.getlist('excel_files')
-        
+
         if not files:
             messages.error(request, 'No files were uploaded.')
             return redirect('excel_app:index')
-        
+
+        if not os.path.exists(settings.PROCESSED_DIR):
+            os.makedirs(settings.PROCESSED_DIR)
+
         for file in files:
             excel_file = ExcelFile(file=file)
             excel_file.save()
-            
+
             try:
-                input_path = excel_file.file.path
+                # Process both sheets
+                sheet1_data, sheet1_missing = old_data(excel_file)
+                sheet2_data, sheet2_missing = new_data(excel_file)
                 
-                data_frame = pd.read_excel(input_path, sheet_name=0)
-
-                sheet1_optional_columns = [
-                    'Regis',
-                    'ProcedureValue',
-                    'Project',
-                    'Building No',
-                    'BuildingNameEn',
-                    'Size',
-                    'UnitNumber',
-                    'PropertyTypeEn', 
-                    'LandNumber',
-                    'ProcedurePartyTypeNameEn',
-                    'NameEn',
-                    'Mobile',
-                    'CountryNameEn',
-                    'BirthDate',
-                    'Area'
-                ]
-
-                sheet1_available_columns = [col for col in sheet1_optional_columns if col in data_frame.columns]
+                # Report missing columns
+                if sheet1_missing:
+                    messages.warning(request, f"Missing columns in {file.name} (Sheet 1): {', '.join(sheet1_missing)}")
+                if sheet2_missing:
+                    messages.warning(request, f"Missing columns in {file.name} (Sheet 2): {', '.join(sheet2_missing)}")
                 
-                missing_columns = [col for col in sheet1_optional_columns if col not in data_frame.columns]
-                if missing_columns:
-                    error_message = f"Missing required columns in {excel_file.filename()}: {', '.join(missing_columns)}"
-                    messages.warning(request, error_message)
-
-                data_frame = data_frame[sheet1_available_columns]
+                # Ensure column names match between sheets for concatenation
+                common_columns = list(set(sheet1_data.columns) & set(sheet2_data.columns))
                 
-                data_frame = data_frame.fillna('NIL').replace('', 'NIL')
-
-                data_frame['has_owner'] = ~data_frame[['NameEn', 'Mobile']].eq('NIL').all(axis=1)
+                # Add any missing columns to each dataframe with default values
+                all_columns = list(set(sheet1_data.columns) | set(sheet2_data.columns))
                 
-                if 'Regis' in data_frame.columns:
-                    data_frame['Regis'] = pd.to_datetime(data_frame['Regis'], errors='coerce')
-
-                data_frame = data_frame.sort_values(by=['has_owner', 'Regis'], ascending=[False, False])
-
-                data_frame.columns = data_frame.columns.str.strip().str.lower()
+                for col in all_columns:
+                    if col not in sheet1_data.columns:
+                        sheet1_data[col] = 'NIL'
+                    if col not in sheet2_data.columns:
+                        sheet2_data[col] = 'NIL'
                 
-                deduplication_columns = ['building no', 'buildingnameen', 'unitnumber', 'project', 'landnumber', 'procedurepartytypenameen']
-
-                available_columns = [col for col in deduplication_columns if col in data_frame.columns]
-
-                if available_columns:
-                    data_frame[available_columns] = data_frame[available_columns].astype(str)
-
-                    data_frame = data_frame.drop_duplicates(subset=available_columns, keep='first')
+                # Concatenate the two dataframes
+                combined_data = pd.concat([sheet1_data, sheet2_data], ignore_index=True)
                 
-                # Filter for buyers only
-                data_frame = data_frame[data_frame['procedurepartytypenameen'] == 'Buyer']
-                data_frame.drop(columns=['has_owner'], inplace=True)
+                # Sort the combined data
+                if 'regis' in combined_data.columns:
+                    combined_data = combined_data.sort_values(by='regis', ascending=False)
                 
-                # Save processed file
-                filename = f"processed_{os.path.basename(input_path)}"
+                # Create the output file
+                filename = f"processed_{os.path.basename(excel_file.file.path)}"
                 output_path = os.path.join(settings.PROCESSED_DIR, filename)
-                data_frame.to_excel(output_path, index=False)
                 
+                # Write to Excel
+                with pd.ExcelWriter(output_path) as writer:
+                    combined_data.to_excel(writer, sheet_name='Combined Data', index=False)
+                    sheet1_data.to_excel(writer, sheet_name='Sheet1 Data', index=False)
+                    sheet2_data.to_excel(writer, sheet_name='Sheet2 Data', index=False)
+                
+                # Update the model with the new file path
                 relative_path = os.path.join('processed', filename)
                 excel_file.processed_file.name = relative_path
                 excel_file.processed = True
                 excel_file.save()
                 
-                # Save each row to the database
-                # rows_saved = 0
-                # for _, row in data_frame.iterrows():
-                #     # Create a dictionary with the model field names and values
-                #     master_data_dict = {
-                #         'regis': row.get('regis', None),
-                #         'procedure_value': row.get('procedurevalue', None) if row.get('procedurevalue', 'NIL') != 'NIL' else None,
-                #         'project': row.get('project', None),
-                #         'building_no': row.get('building no', None),
-                #         'building_name_en': row.get('buildingnameen', None),
-                #         'size': row.get('size', None) if row.get('size', 'NIL') != 'NIL' else None,
-                #         'unit_number': row.get('unitnumber', None),
-                #         'property_type_en': row.get('propertytypeen', None),
-                #         'land_number': row.get('landnumber', None),
-                #         'procedure_party_type_name_en': row.get('procedurepartytypenameen', None),
-                #         'name_en': row.get('nameen', None),
-                #         'mobile': row.get('mobile', None),
-                #         'country_name_en': row.get('countrynameen', None),
-                #         'birth_date': row.get('birthdate', None) if row.get('birthdate', 'NIL') != 'NIL' else None,
-                #         'area': row.get('area', None) if row.get('area', 'NIL') != 'NIL' else None
-                #     }
-                    
-                #     # Handle numeric fields that might be 'NIL' strings
-                #     numeric_fields = ['procedure_value', 'size']
-                #     for field in numeric_fields:
-                #         if master_data_dict[field] == 'NIL':
-                #             master_data_dict[field] = None
-                    
-                #     # Handle date field
-                #     if master_data_dict['birth_date'] == 'NIL':
-                #         master_data_dict['birth_date'] = None
-                    
-                #     # Create and save the MasterData instance
-                #     master_data = MasterData(**master_data_dict)
-                #     master_data.save()
-                #     rows_saved += 1
-                
-                messages.success(request, f"Successfully processed {excel_file.filename()} and saved {rows_saved} records to database")
-                
+                messages.success(request, f"Successfully processed {file.name}")
+
             except Exception as e:
-                messages.error(request, f"Error processing {excel_file.filename()}: {str(e)}")
+                messages.error(request, f"Error processing {file.name}: {str(e)}")
                 excel_file.delete()
-        
+
         return redirect('excel_app:index')
-    
+
     return redirect('excel_app:index')
 
 def results(request):
@@ -249,5 +335,5 @@ def clear_files(request):
 def clear_master_data(request):
     MasterData.objects.all().delete()
     
-    messages.success(request, "All data's have been cleared.")
+    messages.success(request, "All data's have been cleared from Master Data.")
     return redirect('excel_app:index')

@@ -1,5 +1,5 @@
 from django.db import models
-import uuid
+import re
 import os
 import pandas as pd
 
@@ -49,6 +49,13 @@ class MergedFile(models.Model):
                         (df['unitnumber'] == unit_number) & 
                         (df['procedurepartytypenameen'] == 'Buyer')]
 
+                # If no exact match is found, check for unit numbers with a prefix (one letter + '-' + unit_number)
+                if match.empty:
+                    pattern = rf'^[A-Za-z]-{re.escape(str(unit_number))}$'  # Matches format like "B-101"
+                    match = df[(df['buildingnameen'].astype(str).str.lower() == str(building_name).lower()) &
+                            (df['unitnumber'].astype(str).str.match(pattern)) & 
+                            (df['procedurepartytypenameen'] == 'Buyer')]
+
             if not match.empty:
                 return {
                     'owner_name': match.iloc[0].get('nameen', 'NILL'),
@@ -77,7 +84,7 @@ class MasterData(models.Model):
     mobile = models.CharField(max_length=20, null=True, blank=True)
     country_name_en = models.CharField(max_length=255, null=True, blank=True)
     birth_date = models.DateField(null=True, blank=True)
-    area = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    area = models.CharField(max_length=255, null=True, blank=True)
 
     def __str__(self):
         return f"{self.name_en} - {self.unit_number}"
