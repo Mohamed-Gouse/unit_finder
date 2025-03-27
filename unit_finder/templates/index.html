@@ -160,6 +160,13 @@
             </div>
         </div>
         
+        <!-- Edit Mode Toggle Button -->
+        <div class="mt-3 mb-3">
+            <button id="toggleEditModeBtn" class="btn btn-warning">
+                <i class="fa fa-edit"></i> Edit Data
+            </button>
+        </div>
+        
         <!-- Additional CRM Fields -->
         <div class="row mt-4">
             <div class="col-md-6">
@@ -183,6 +190,9 @@
             <a id="downloadResultsBtn" href="#" class="btn btn-success">
                 <i class="fa fa-download"></i> Download as Excel
             </a>
+            <button id="saveEditedDataBtn" class="btn btn-primary ms-2 d-none">
+                <i class="fa fa-save"></i> Save Changes
+            </button>
             <button id="addToCrmBtn" class="btn btn-primary ms-2">
                 <i class="fa fa-plus"></i> Add to CRM
             </button>
@@ -311,6 +321,84 @@
                                 const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(formattedData)}`;
                                 window.open(whatsappUrl, '_blank');
                             });
+
+                            const toggleEditModeBtn = document.getElementById('toggleEditModeBtn');
+                            const saveEditedDataBtn = document.getElementById('saveEditedDataBtn');
+                            let isEditMode = false;
+
+                            toggleEditModeBtn.addEventListener('click', function() {
+                                isEditMode = !isEditMode;
+                                const tableContainer = document.getElementById('tableContainer');
+                                const table = tableContainer.querySelector('table');
+
+                                if (isEditMode) {
+                                    // Enable editing for owner name and phone columns
+                                    table.querySelectorAll('tbody tr').forEach(row => {
+                                        const ownerNameCell = row.querySelector('td:nth-child(5)');
+                                        const ownerPhoneCell = row.querySelector('td:nth-child(6)');
+
+                                        // Convert cells to input fields
+                                        const originalOwnerName = ownerNameCell.textContent;
+                                        const originalOwnerPhone = ownerPhoneCell.textContent;
+
+                                        ownerNameCell.innerHTML = `
+                                            <input type="text" class="form-control form-control-sm owner-name-edit" 
+                                                value="${originalOwnerName}" data-original="${originalOwnerName}">
+                                        `;
+                                        ownerPhoneCell.innerHTML = `
+                                            <input type="text" class="form-control form-control-sm owner-phone-edit" 
+                                                value="${originalOwnerPhone}" data-original="${originalOwnerPhone}">
+                                        `;
+
+                                    });
+
+                                    toggleEditModeBtn.classList.add('btn-secondary');
+                                    toggleEditModeBtn.classList.remove('btn-warning');
+                                    saveEditedDataBtn.classList.remove('d-none');
+                                } else {
+                                    // Revert to original view
+                                    table.querySelectorAll('tbody tr').forEach(row => {
+                                        const ownerNameCell = row.querySelector('td:nth-child(5)');
+                                        const ownerPhoneCell = row.querySelector('td:nth-child(6)');
+
+                                        ownerNameCell.textContent = ownerNameCell.querySelector('input').getAttribute('data-original');
+                                        ownerPhoneCell.textContent = ownerPhoneCell.querySelector('input').getAttribute('data-original');
+                                    });
+
+                                    toggleEditModeBtn.classList.remove('btn-secondary');
+                                    toggleEditModeBtn.classList.add('btn-warning');
+                                    saveEditedDataBtn.classList.add('d-none');
+                                }
+                            });
+
+                            // Save Edited Data
+                            saveEditedDataBtn.addEventListener('click', function() {
+                                const tableContainer = document.getElementById('tableContainer');
+                                const table = tableContainer.querySelector('table');
+                                
+                                // Update the resultData with edited values
+                                const processedData = JSON.parse(resultData);
+                                
+                                table.querySelectorAll('tbody tr').forEach((row, index) => {
+                                    const ownerNameInput = row.querySelector('.owner-name-edit');
+                                    const ownerPhoneInput = row.querySelector('.owner-phone-edit');
+                                    
+                                    if (ownerNameInput && ownerPhoneInput) {
+                                        processedData[index].owner_name = ownerNameInput.value;
+                                        processedData[index].owner_phone = ownerPhoneInput.value;
+                                    }
+                                });
+
+                                // Update resultData with modified data
+                                resultData = JSON.stringify(processedData);
+
+                                // Trigger edit mode toggle to revert view
+                                toggleEditModeBtn.click();
+
+                                // Optional: You might want to show a toast or alert about successful save
+                                document.getElementById('crmToast').querySelector('.toast-body').textContent = 'Data updated successfully!';
+                                crmToast.show();
+                            }); 
                         }
                         else if (data.status.startsWith('failed')) {
                             // Show error section

@@ -1,6 +1,7 @@
+from django.urls import reverse
 import requests
 import pandas as pd
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.http import HttpResponse, JsonResponse
 import json, os
 from excel_app.models import MergedFile
