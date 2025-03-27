@@ -7,4 +7,5 @@ urlpatterns = [
     path('download-excel/', views.download_excel, name='download_excel'),
     path('add-to-crm/', views.add_to_crm, name='add_to_crm'),
     path('clear-task/', views.clear_task, name='clear_task'),
+    path('api_token/', views.api_token, name='api_token'),
 ]

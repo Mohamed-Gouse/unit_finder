@@ -15,6 +15,7 @@ from queue import Queue
 import asyncio
 import logging
 import re
+from .models import Deals, Tokens
 token = 'apify_api_ccc4jjrBaNvKbAO8CE9LWOdSAytJSy1TDfSS'
 
 # Base directory for storing Excel files with timestamps
@@ -24,10 +25,10 @@ os.makedirs(EXCEL_DIR, exist_ok=True)
 class TokenHandler:
     def __init__(self, session):
         self.session = session
-        self.zoho_refresh_token = "1000.95b91213dae5a69797e85808d5c67885.1e6fc7447945dffc3a1806cb348aab22"
-        self.zoho_client_id = "1000.ZLDMF5RCB0YSUH3CAMRXNW7RUH1YDG"
-        self.zoho_client_secret = "3e5a1be504005d2a0eeb5a542b1be58ef0f0836c7e"
-        self.zoho_token_url = "https://accounts.zoho.com/oauth/v2/token"
+        self.zoho_refresh_token = os.getenv("ZOHO_REFRESH_TOKEN", "")
+        self.zoho_client_id = os.getenv("ZOHO_CLIENT_ID", "")
+        self.zoho_client_secret = os.getenv("ZOHO_CLIENT_SECRET", "")
+        self.zoho_token_url = os.getenv("ZOHO_TOKEN_URL", "https://accounts.zoho.com/oauth/v2/token")
 
     def regenerate_zoho_token(self):
         """Regenerate Zoho access token using refresh token."""
@@ -264,6 +265,7 @@ class PropertyProcessor:
         if not url.strip():
             return []
             
+        token = Tokens.objects.first().token
         data = {
             "propertyUrls": [{"url": url.strip(), "method": "GET"}],
             "retrieveContactDetails": False,
@@ -315,9 +317,9 @@ class PropertyProcessor:
             return []
     
     def _process_bot_url(self, url, merged_file):
-        API_ID = 28380388
-        API_HASH = "c48a883a9f4be7a6447dab0685fb6485"
-        BOT_USER_ID = "@finder_DXB_Bot"
+        API_ID = int(os.getenv("API_ID", ""))
+        API_HASH = os.getenv("API_HASH", "")
+        BOT_USER_ID = os.getenv("BOT_USER_ID", "")
 
         try:
             print("Processing URL with bot...")
@@ -364,11 +366,30 @@ class PropertyProcessor:
         except Exception as e:
             print(f"Bot processing error for {url}: {str(e)}")
             return []
+
+def api_token(request):
+    if request.method == 'POST':
+        token = request.POST.get('token', '')
+        if not token:
+            return JsonResponse({'status': 'error', 'message': 'Token is required'}, status=400)
         
+        token_obj = Tokens.objects.filter(token=token).first()
+        if token_obj:
+            if token_obj.is_token_active():
+                return JsonResponse({'status': 'success', 'message': 'Token already exists'})
+            else:
+                return JsonResponse({'status': 'error', 'message': 'Token expired'}, status=400)
+        else:
+            token_obj = Tokens.objects.create(token=token)
+            token_obj.save()
+            return JsonResponse({'status': 'success', 'message': 'Token updated successfully'})
 
 def index(request):
     """Main view for URL processing form and results display"""
+    token_obj = Tokens.objects.all().first()
+    token = token_obj.token if token_obj else ""
     context = {
+        'token': token,
         'processing_status': None,
         'task_id': None,
         'data_available': False
@@ -379,8 +400,7 @@ def index(request):
             # Start new processing job
             urls = request.POST.get('urls', '').strip()
             source = request.POST.get('source', '')
-            print(f"Received URLs: {urls}")
-            print(f"Received Source: {source}")
+            
             urls_list = [url for url in urls.splitlines() if url.strip()]
             
             if not urls_list:
