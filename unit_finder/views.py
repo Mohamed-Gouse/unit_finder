@@ -299,8 +299,8 @@ class PropertyProcessor:
                     "property_type": item.get("PropertyType", ""),
                     "size": item.get("PropertySize", ""),
                     "rooms": item.get("Bedrooms", ""),
-                    "name": owner_details.get('owner_name', 'NILL'),
-                    "phone": owner_details.get('owner_phone', 'NILL'),
+                    "name": owner_details.get('owner_name', 'NIL'),
+                    "phone": owner_details.get('owner_phone', 'NIL'),
                 })
             
             return formatted_items
@@ -352,11 +352,8 @@ class PropertyProcessor:
                 "property_type": extracted_data.get("property_type", "NIL"),
                 "size": extracted_data.get("size", "NIL"),
                 "rooms": extracted_data.get("rooms", "NIL"),
-                "Amount": "NIL",  # Placeholder value
-                "permit_end_date": "NIL",  # Placeholder value
-                "permit_type": "NIL",  # Placeholder value
-                "owner_name": owner_details.get('owner_name', 'NILL'),
-                "owner_phone": owner_details.get('owner_phone', 'NILL'),
+                "owner_name": owner_details.get('owner_name', 'NIL'),
+                "owner_phone": owner_details.get('owner_phone', 'NIL'),
             }]
 
         except Exception as e:
@@ -485,6 +482,8 @@ def check_status(request):
     # Add real-time data preview as processing happens
     if processor.processed_data:
         df = pd.DataFrame(processor.processed_data)
+        columns = ["url", "BuildingNameEn", "UnitNumber", "property_type", "name", "phone"]
+        df = df[columns]
         response_data['preview_html'] = df.to_html(classes='table table-striped table-hover', index=False)
     
     # Add download information if completed
@@ -494,6 +493,8 @@ def check_status(request):
         # Convert processed data to HTML for display
         if processor.processed_data:
             df = pd.DataFrame(processor.processed_data)
+            columns = ["url", "BuildingNameEn", "UnitNumber", "property_type", "name", "phone"]
+            df = df[columns]
             response_data['table_html'] = df.to_html(classes='table table-striped table-hover', index=False)
             response_data['data_json'] = json.dumps(processor.processed_data)
         
@@ -501,16 +502,6 @@ def check_status(request):
         response_data['deal_owners'] = get_deal_owners(request)
     
     return JsonResponse(response_data)
-
-def format_deal_name(row):
-    units = row['UnitNumber'].split(', ')
-    if len(units) > 1:
-        return f"{units[0]} # {row['BuildingNameEn']}"
-    return f"{units[0]} | {row['BuildingNameEn']}"
-
-def format_phone_number(phone_number):
-    phone_number = str(phone_number).replace('+', '')
-    return f"+{phone_number.replace('-', ' ')}"
 
 def download_excel(request):
     filename = request.GET.get('filename')
@@ -572,7 +563,7 @@ def add_to_crm(request):
                 formatted_tags = "Warm Lead"
 
             for lead in property_data:
-                if lead['owner_name'] == 'NILL' or not lead['owner_phone']:
+                if lead['name'] == 'NIL' or lead['phone'] == 'NIL':
                     continue
                 units = lead['UnitNumber'].split(', ')
                 if len(units) > 1:

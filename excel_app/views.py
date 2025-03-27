@@ -35,7 +35,7 @@ def old_data(excel_file):
     data_frame = data_frame[sheet1_available_columns]
     data_frame = data_frame.fillna('NIL').replace('', 'NIL')
 
-    data_frame['has_owner'] = ~data_frame[['NameEn', 'Mobile']].eq('NIL').all(axis=1)
+    data_frame['has_owner'] = (data_frame['NameEn'].ne('NIL')) & (data_frame['Mobile'].ne('NIL'))
 
     if 'Regis' in data_frame.columns:
         data_frame['Regis'] = pd.to_datetime(data_frame['Regis'], errors='coerce')
