@@ -206,13 +206,12 @@ class PropertyProcessor:
     def process_urls(self):
         """Process URLs and update status in a separate thread"""
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d")
             self.excel_filename = f"{EXCEL_DIR}/property_data_{timestamp}.xlsx"
             
             # Create an empty DataFrame with headers
-            headers = ["Area", "master_project", "BuildingNameEn", "UnitNumber", 
-                      "property_type", "size", "rooms", "Amount", 
-                      "permit_end_date", "permit_type", "owner_name", "owner_phone"]
+            headers = ["url", "Area", "BuildingNameEn", "UnitNumber",
+                      "property_type", "size", "rooms", "name", "phone"]
             df = pd.DataFrame(columns=headers)
             
             # Save initial empty file
@@ -284,7 +283,7 @@ class PropertyProcessor:
                 
             formatted_items = []
             for item in result:
-                building_name = item.get("PropertyNameEn", "")
+                building_name = item.get("BuildingNameEn", "")
                 unit_number = item.get("PropertyUnitNumber", "")
                 
                 # Fetch owner details
@@ -293,18 +292,15 @@ class PropertyProcessor:
                     owner_details = merged_file.get_owner_details(building_name, unit_number)
                 
                 formatted_items.append({
-                    'url': url.strip(),
+                    'url': item.get("Url", ""),
                     "Area": item.get("ZoneNameEn", ""),
                     "BuildingNameEn": building_name,
                     "UnitNumber": unit_number,
-                    "property_type": item.get("PropertyTypeNameEn", ""),
+                    "property_type": item.get("PropertyType", ""),
                     "size": item.get("PropertySize", ""),
-                    "rooms": item.get("RoomTypeEn", ""),
-                    "Amount": item.get("PropertyValue", ""),
-                    "permit_end_date": item.get("PermitEndDate", ""),
-                    "permit_type": item.get("PermitTypeNameEn", ""),
-                    "owner_name": owner_details.get('owner_name', 'NILL'),
-                    "owner_phone": owner_details.get('owner_phone', 'NILL'),
+                    "rooms": item.get("Bedrooms", ""),
+                    "name": owner_details.get('owner_name', 'NILL'),
+                    "phone": owner_details.get('owner_phone', 'NILL'),
                 })
             
             return formatted_items
