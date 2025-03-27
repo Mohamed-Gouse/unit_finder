@@ -206,7 +206,7 @@ class PropertyProcessor:
     def process_urls(self):
         """Process URLs and update status in a separate thread"""
         try:
-            timestamp = datetime.now().strftime("%Y%m%d")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.excel_filename = f"{EXCEL_DIR}/property_data_{timestamp}.xlsx"
             
             # Create an empty DataFrame with headers
@@ -534,50 +534,18 @@ def download_excel(request):
             return HttpResponse("File not found", status=404)
 
         data_frame = pd.read_excel(filepath)
-        data_frame = data_frame[data_frame['owner_name'] != 'NILL']
-        data_frame = data_frame[data_frame['owner_phone'].notna() & (data_frame['owner_phone'] != '')]
-
-        if not data_frame.empty:
-            final_result = data_frame.groupby('owner_phone', as_index=False).agg({
-                'UnitNumber': lambda x: ', '.join(sorted(set(x))),
-                'url': lambda x: ', '.join(sorted(set(x))),
-                **{col: 'first' for col in data_frame.columns if col not in ['owner_phone', 'UnitNumber', 'url']}
-            })
-
-            final_result['Deal Name'] = final_result.apply(format_deal_name, axis=1)
-            final_result['permit_type'] = final_result['permit_type'].str.lower()
-
-            deal_data = pd.DataFrame({
-                'Deal Name': final_result['Deal Name'],
-                'Amount': final_result['Amount'],
-                'Pipeline Name': final_result['permit_type'].apply(lambda x: 'Seller Pipeline' if x in ['sell', 'buy'] else 'Landlord Pipeline'),
-                'Stage': 'New enquiry',
-                'Lead Source': 'Campaign',
-                'Last Name': final_result['owner_name'],
-                'Tag': 'Warm Lead',
-                'Follow up date': datetime.today().strftime('%d/%m/%Y %H:%M'),
-                'Phone': final_result['owner_phone'],
-                'Description': final_result['url'],
-                'Unit No': final_result['UnitNumber'],
-            })
-
-            deal_data['Phone'] = deal_data['Phone'].apply(format_phone_number)
-
+        if not data_frame.empty:       
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                deal_data.to_excel(writer, index=False, sheet_name="CRM Data")
-
+                data_frame.to_excel(writer, index=False, sheet_name="CRM Data")
             output.seek(0)
-
             response = HttpResponse(
                 output.read(),
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
             response['Content-Disposition'] = f'attachment; filename="modified_{filename}"'
             return response
-
         return HttpResponse("No valid data to process", status=400)
-
     except Exception as e:
         return HttpResponse(f"Error processing request: {str(e)}", status=500)
     
